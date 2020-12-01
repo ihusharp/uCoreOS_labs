@@ -1,0 +1,209 @@
+   https://blog.csdn.net/xiaoxiaowenqiang/article/details/81840086
+    bash
+    |-- boot
+    | |-- asm.h
+    | |-- bootasm.S 增加了对计算机系统中物理内存布局的探测功能；
+    | \`-- bootmain.c 
+    |-- kern
+    | |-- init
+    | | |-- entry.S 根据临时段表重新暂时建立好新的段空间，为进行分页做好准备。
+    | | \`-- init.c
+    | |-- mm
+    | | |-- default\_pmm.c
+    | | |-- default\_pmm.h 提供基本的基于链表方法的物理内存管理（分配单位为页，即4096字节）；
+    | | |-- memlayout.h 
+    | | |-- mmu.h    
+    | | |-- pmm.c   pmm.c包含了对此物理内存管理类框架的访问，以及与建立、修改、访问页表相关的各种函数实现。
+    | | \`-- pmm.h     pmm.h定义物理内存管理类框架struct pmm_manager，基于此通用框架可以实现不同的物理内存管理策略和算法(default_pmm.[ch]
+实现了一个基于此框架的简单物理内存管理策略)；
+    | |-- sync
+    | | \`-- sync.h    为确保内存管理修改相关数据时不被中断打断，提供两个功能，一个是保存eflag寄存器中的中断屏蔽位信息并屏蔽中断的功能，另一个是根据保存的中断屏蔽位信息来使能中断的功能；（可不用细看）
+    | \`-- trap
+    | |-- trap.c
+    | |-- trapentry.S
+    | |-- trap.h
+    | \`-- vectors.S
+    |-- libs
+    | |-- atomic.h   定义了对一个变量进行读写的原子操作，确保相关操作不被中断打断。（可不用细看
+    | |-- list.h   定义了通用双向链表结构以及相关的查找、插入等基本操作，这是建立基于链表方法的物理内存管理（以及其他内核功能）的基础。其他有类似双向链表需求的内核功能模块可直接使用list.h中定义的函数
+    \`-- tools
+    |-- kernel.ld   ld形成执行文件的地址所用到的链接脚本。修改了ucore的起始入口和代码段的起始地址。相关细节可参看附录C。
+-------------------------------------------------------------
+
+    lab1的整体目录结构如下所示：
+>>> tree
+  .
+  ├── bin  // =======编译后生成======================================
+  │   ├── bootblock  // 是引导区
+  │   ├── kernel     // 是操作系统内核
+  │   ├── sign       // 用于生成一个符合规范的硬盘主引导扇区
+  │   └── ucore.img　// ucore.img 通过dd指令，将上面我们生成的　bootblock　和　kernel 的ELF文件拷贝到ucore.img
+  ├── boot　// =======bootloader 代码=================================
+  │   ├── asm.h      // 是bootasm.S汇编文件所需要的头文件, 是一些与X86保护模式的段访问方式相关的宏定义.
+  │   ├── bootasm.S　// 0. 定义了最先执行的函数start，部分初始化，从实模式切换到保护模式，调用bootmain.c中的bootmain函数
+  │   └── bootmain.c // 1. 实现了bootmain函数, 通过屏幕、串口和并口显示字符串,加载ucore操作系统到内存，然后跳转到ucore的入口处执行.
+  |                  // 生成 bootblock.out 
+  |                  // 由 sign.c 在最后添加 0x55AA之后生成 规范的 512字节的
+  ├── kern  // =======ucore系统部分===================================
+  │   ├── debug// 内核调试部分 ==================================================
+  │   │   ├── assert.h   // 保证宏 assert宏，在发现错误后调用 内核监视器kernel monitor
+  │   │   ├── kdebug.c　 // 提供源码和二进制对应关系的查询功能，用于显示调用栈关系。
+  │   │   ├── kdebug.h   // 其中补全print_stackframe函数是需要完成的练习。其他实现部分不必深究。
+  │   │   ├── kmonitor.c // 实现提供动态分析命令的kernel monitor，便于在ucore出现bug或问题后，
+  │   │   ├── kmonitor.h // 能够进入kernel monitor中，查看当前调用关系。
+  │   │   ├── panic.c    // 内核错误(Kernel panic)是指操作系统在监测到内部的致命错误,
+  │   │   └── stab.h
+  │   ├── driver　//驱动==========================================================
+  │   │   ├── clock.c    // 实现了对时钟控制器8253的初始化操作 系统时钟 
+  │   │   ├── clock.h   
+  │   │   ├── console.c  // 实现了对串口和键盘的中断方式的处理操作 串口命令行终端
+  │   │   ├── console.h
+  │   │   ├── intr.c     // 实现了通过设置CPU的eflags来屏蔽和使能中断的函数
+  │   │   ├── intr.h
+  │   │   ├── kbdreg.h   // 
+  │   │   ├── picirq.c   // 实现了对中断控制器8259A的初始化和使能操作   
+  │   │   └── picirq.h
+  │   ├── init　// 系统初始化======================================================
+  │   │   └── init.c       // ucore操作系统的初始化启动代码
+  │   ├── libs
+  │   │   ├── readline.c
+  │   │   └── stdio.c
+  │   ├── mm　// 内存管理 Memory management========================================
+  │   │   ├── memlayout.h  // 操作系统有关段管理（段描述符编号、段号等）的一些宏定义
+  │   │   ├── mmu.h        // 内存管理单元硬件 Memory Management Unit 将线性地址映射为物理地址,包括EFLAGS寄存器等段定义
+  │   │   ├── pmm.c　　　　 // 设定了ucore操作系统在段机制中要用到的全局变量
+  │   │   └── pmm.h        // 任务状态段ts，全局描述符表 gdt[],加载gdt的函数lgdt，　初始化函数gdt_init
+  │   └── trap　// 陷阱trap 异常exception 中断interrupt 中断处理部分=================
+  │       ├── trap.c       // 紧接着第二步初步处理后，继续完成具体的各种中断处理操作；
+  │       ├── trapentry.S  // 紧接着第一步初步处理后，进一步完成第二步初步处理；
+  |       |                // 并且有恢复中断上下文的处理，即中断处理完毕后的返回准备工作；
+  │       ├── trap.h       // 紧接着第二步初步处理后，继续完成具体的各种中断处理操作；
+  │       └── vectors.S    // 包括256个中断服务例程的入口地址和第一步初步处理实现。
+  |                        // 此文件是由tools/vector.c在编译ucore期间动态生成的
+  ├── libs　// 公共库部分===========================================================
+  │   ├── defs.h           // 包含一些无符号整型的缩写定义
+  │   ├── elf.h
+  │   ├── error.h
+  │   ├── printfmt.c
+  │   ├── stdarg.h　　　　　// argument 参数
+  │   ├── stdio.h          // 标志输入输出 io
+  │   ├── string.c
+  │   ├── string.h
+  │   └── x86.h            // 一些用GNU C嵌入式汇编实现的C函数
+  ├── Makefile             // 指导make完成整个软件项目的编译，清除等工作。
+  └── tools　// 工具部分============================================================
+      ├── function.mk      // mk模块　指导make完成整个软件项目的编译，清除等工作。
+      ├── gdbinit　　　　   // gnu debugger 调试
+      ├── grade.sh
+      ├── kernel.ld
+      ├── sign.c           // 一个C语言小程序，是辅助工具，用于生成一个符合规范的硬盘主引导扇区。
+      |                    // 规范的硬盘主引导扇区大小为512字节，结束符为0x55AA
+      |                    // obj/bootblock.out( <= 500 )  +  0x55AA -> bootblock(512字节)
+      └── vector.c         // 生成vectors.S　中断服务例程的入口地址和第一步初步处理实现
+---------------------------------------------------------------------
+
+ucore采用二级页表
+为了实现分页机制，需要建立好虚拟内存和物理内存的页映射关系，即正确建立二级页表。此过程涉及硬件细节，不同的地址映射关系组合，相对比较复杂。总体而言，我们需要思考如下问题：
+
+    如何在建立页表的过程中维护全局段描述符表（GDT）和页表的关系，确保ucore能够在各个时间段上都能正常寻址？
+    对于哪些物理内存空间需要建立页映射关系？
+    具体的页映射关系是什么？
+    页目录表的起始地址设置在哪里？
+    页表的起始地址设置在哪里，需要多大空间？
+    如何设置页目录表项的内容？
+    如何设置页表项的内容？
+-----------------------------------------------------------------------
+在lab2中，为了建立正确的地址映射关系，ld在链接阶段生成了ucore OS执行代码的虚拟地址，而bootloader与ucore OS协同工作，通过在运行时对地址映射的一系列“腾挪转移”，从计算机加电，启动段式管理机制，启动段页式管理机制，在段页式管理机制下运行这整个过程中，虚地址到物理地址的映射产生了多次变化，实现了最终的段页式映射关系：
+
+     virt addr = linear addr = phy addr + 0xC0000000
+-------------------------------------------------------------------------
+1. lab1中通过ld工具形成的ucore的起始虚拟地址从0x100000开始，注意：这个地址是虚拟地址。但由于lab1中建立的段地址映射关系为对等关系，所以ucore的物理地址也是0x100000，而ucore的入口函数kern_init的起始地址。
+     lab1： virt addr = linear addr = phy addr
+
+2. lab2中通过ld工具形成的ucore的起始虚拟地址从0xC0100000开始，注意：这个地址也是虚拟地址。入口函数为kern_entry函数（在kern/init/entry.S中）。
+这实际上说明了ucore在lab1和lab2中采用的地址映射不同。
+且 lab2在不同阶段有不同的虚拟地址，线性地址以及物理地址之间的映射关系。
+  最终映射关系：     virt addr = linear addr = phy addr + 0xC0000000
+---------------------------------------------------------------
+lab2在不同阶段有不同的虚拟地址，线性地址以及物理地址之间的映射关系。
+分为四个阶段：
+  第一个阶段是bootloader阶段，即从bootloader的start函数（在boot/bootasm.S中）到执行ucore kernel的kern_\entry函数之前，其虚拟地址，线性地址以及物理地址之间的映射关系与lab1的一样，即：
+     lab2 stage 1： virt addr = linear addr = phy addr
+----------------------
+  第二个阶段：
+    从entry.S的kern_entry到pmm.c的enable_paging()。 
+
+这个阶段就比较复杂了，我们先来看bootmain.c这个文件：
+
+#define ELFHDR ((struct elfhdr *)0x10000) // scratch space
+bootmain.c中的函数被调用时候还处于第一阶段， 
+所以从上面这个宏定义我们可以知道kernel是被放在物理地址为0x10000的内存空间。
+
+我们再来看看链接文件 tools/kernel.ld 
+
+/* Load the kernel at this address: "." means the current address */
+     . = 0xC0100000;
+ 
+连接文件将kernel(物理地址 0x10000)链接到了0xC0100000(这是Higher Half Kernel， 
+
+这个地址是kernel的虚拟地址。 由于此时系统还只是采用 段式映射，如果我们还是使用
+
+      虚拟地址 virt addr = 线性地址 linear addr = 物理地址 phy addr
+  
+    的话，我们根本不能访问到正确的内存空间，
+比如要访问虚拟地址 0xC0100000， 
+其物理地址应该在 0x00100000，
+而在这种映射下， 我们却访问了0xC0100000的物理地址。
+因此， 为了让虚拟地址和物理地址能匹配，我们必须要重新设计GDT。
+
+在entry.S中，我们重新设计了GDT
+#define REALLOC(x) (x - KERNBASE)
+    lgdt REALLOC(__gdtdesc)
+可以看到，此时段的起始地址由0变成了-KERNBASE。因此，在这个阶段， 地址映射关系为：
+
+virt addr - 0xC0000000 = linear addr = phy addr
+0xC0100000 - 0xC0000000 = 0x00100000 
+
+
+这里需要注意两个个地方，
+第一，lgdt载入的是线性地址，
+所以用.long REALLOC(__gdt)将GDT的虚拟地址转换成了线性地址；
+第二，因为在载入GDT前，映射关系还是
+
+    virt addr = linear addr = phy addr
+
+所以通过REALLOC(__gdtdesc)来将__gdtdesc的虚拟地址转换为物理地址，
+这样，lgdt才能真正的找到GDT存储的地方。
+----------
+我们发现该函数将加载cr0，即使能页机制
+static void
+enable_paging(void) {
+    lcr3(boot_cr3);
+
+    // turn on paging
+    uint32_t cr0 = rcr0();
+    cr0 |= CR0_PE | CR0_PG | CR0_AM | CR0_WP | CR0_NE | CR0_TS | CR0_EM | CR0_MP;
+    cr0 &= ~(CR0_TS | CR0_EM);
+    lcr0(cr0);
+}
+使能cr0
+则接下来的访问是基于段页式的映射关系了。
+-----------------------------------------
+第三阶段：
+第三个阶段从enable_paging函数开始，到执行gdt_init函数（在kern/mm/pmm.c中）之前，启动了页映射机制，但没有第三次更新段映射。
+
+  由阶段二可知，段映射为：
+  virt addr - 0xC0000000 = linear addr
+  又此时更新了页映射
+   linear addr  = phy addr + 0xC0000000 
+因此：现在
+virt addr - 0xC0000000 = linear addr  = phy addr + 0xC0000000 
+  # 线性地址在0~4MB之外的三者映射关系
+virt addr - 0xC0000000 = linear addr  = phy addr 
+  #  线性地址在0~4MB之内的三者映射关系
+
+-------------->>>>
+pmm_init函数中
+     boot_pgdir[0] = boot_pgdir[PDX(KERNBASE)];
+就是用来建立物理地址在0~4MB之内的三个地址间的临时映射关系
+virt addr - 0xC0000000 = linear addr = phy addr。
